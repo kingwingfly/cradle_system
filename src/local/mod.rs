@@ -1,11 +1,7 @@
 //! Local cradle, running on local machine, does not require network signal.
 
 use std::{
-    cell::RefCell,
-    sync::{
-        mpsc::{channel, Sender},
-        Arc, Mutex,
-    },
+    sync::mpsc::{channel, Sender},
     thread,
     time::Duration,
 };
@@ -14,42 +10,25 @@ use std::{
 pub type BoxResult<T> = Result<T, Box<dyn std::error::Error + Send>>;
 
 /// A baby that cries after a certain time.
-pub struct Baby {
-    time: usize,
-    cry: Box<dyn Fn() -> BoxResult<()> + Send>,
-}
-
-impl Baby {
-    /// Instantiates a new baby.
-    pub fn new<F>(time: usize, cry: F) -> Self
-    where
-        F: Fn() -> BoxResult<()> + Send + 'static,
-    {
-        Self {
-            time,
-            cry: Box::new(cry),
-        }
-    }
-
-    fn cry(&self) -> BoxResult<()> {
-        (self.cry)()?;
-        Ok(())
-    }
+pub trait Baby {
+    /// elapsed time in seconds
+    /// The cry behavior of the baby.
+    fn cry(&mut self, elapsed: usize) -> BoxResult<()>;
 }
 
 /// A cradle that holds babies.
 pub struct Cradle {
-    babies: Arc<Mutex<RefCell<Vec<Baby>>>>,
     tx: Sender<Signal>,
     jh: thread::JoinHandle<BoxResult<()>>,
 }
 
 impl Cradle {
     /// Instantiates a new cradle.
-    pub fn new() -> Self {
+    pub fn new<B>(mut babies: Vec<B>) -> Self
+    where
+        B: Baby + Send + Sync + 'static,
+    {
         let (tx, rx) = channel();
-        let babies: Arc<Mutex<RefCell<Vec<Baby>>>> = Arc::new(Mutex::new(RefCell::new(Vec::new())));
-        let babies_c = babies.clone();
         let jh = thread::spawn(move || {
             if Signal::Start == rx.recv().unwrap() {
                 let mut elapsed = 0;
@@ -58,21 +37,12 @@ impl Cradle {
                     match signal {
                         Ok(signal) => match signal {
                             Signal::Reset => elapsed = 0,
-                            Signal::Cry => {
-                                let babies = babies_c.lock().unwrap();
-                                for baby in babies.borrow().iter() {
-                                    baby.cry()?;
-                                }
-                            }
                             Signal::Stop => break,
                             _ => {}
                         },
                         _ => {
-                            let babies = babies_c.lock().unwrap();
-                            for baby in babies.borrow().iter() {
-                                if elapsed >= baby.time {
-                                    baby.cry()?;
-                                }
+                            for baby in babies.iter_mut() {
+                                baby.cry(elapsed)?;
                             }
                             thread::sleep(Duration::from_secs(1));
                             elapsed += 1;
@@ -82,13 +52,7 @@ impl Cradle {
             }
             Ok(())
         });
-        Self { babies, tx, jh }
-    }
-
-    /// Pushes a baby into the cradle.
-    pub fn put_baby(&mut self, baby: Baby) {
-        let mut_babies = self.babies.lock().unwrap();
-        mut_babies.borrow_mut().push(baby);
+        Self { tx, jh }
     }
 
     /// Starts the cradle.
@@ -106,27 +70,15 @@ impl Cradle {
         self.tx.send(Signal::Stop).unwrap();
     }
 
-    /// Forces the babies to cry.
-    pub fn cry(&self) {
-        self.tx.send(Signal::Cry).unwrap();
-    }
-
     /// Joins the cradle thread.
     pub fn join(self) -> thread::Result<BoxResult<()>> {
         self.jh.join()
     }
 }
 
-impl Default for Cradle {
-    fn default() -> Self {
-        Cradle::new()
-    }
-}
-
 #[derive(PartialEq)]
 enum Signal {
     Reset,
-    Cry,
     Start,
     Stop,
 }
@@ -137,26 +89,23 @@ mod tests {
 
     #[test]
     fn test_cradle() {
-        let mut cradle = Cradle::new();
-        cradle.put_baby(Baby::new(2, || {
-            println!("Baby 1: Waaaaaah!");
-            Ok(())
-        }));
-        cradle.put_baby(Baby::new(3, || {
-            println!("Baby 2: Waaaaaah!");
-            Ok(())
-        }));
+        struct BabyImpl {
+            times: usize,
+        }
+        impl Baby for BabyImpl {
+            // Only cry `times`, and cry when elapsed time >= 2.
+            fn cry(&mut self, elapsed: usize) -> BoxResult<()> {
+                if elapsed >= 2 && self.times > 0 {
+                    self.times -= 1;
+                    println!("Baby cries at {}", elapsed);
+                }
+                Ok(())
+            }
+        }
+        let cradle = Cradle::new(vec![BabyImpl { times: 2 }]);
         cradle.start();
-        cradle.put_baby(Baby::new(1, || {
-            println!("Baby 3: Waaaaaah!");
-            Ok(())
-        }));
-        thread::sleep(Duration::from_secs(7));
-        cradle.reset();
-        thread::sleep(Duration::from_secs(1));
-        cradle.reset();
-        thread::sleep(Duration::from_secs(1));
-        cradle.cry();
+        thread::sleep(Duration::from_secs(4));
+        // The baby should cry twice.
         cradle.stop();
         cradle.join().unwrap().unwrap();
     }
