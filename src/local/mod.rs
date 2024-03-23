@@ -106,14 +106,14 @@ impl Cradle {
         self.tx.send(Signal::Stop).unwrap();
     }
 
-    /// Joins the cradle thread.
-    pub fn join(self) -> thread::Result<BoxResult<()>> {
-        self.jh.join()
-    }
-
     /// Forces the babies to cry.
     pub fn cry(&self) {
         self.tx.send(Signal::Cry).unwrap();
+    }
+
+    /// Joins the cradle thread.
+    pub fn join(self) -> thread::Result<BoxResult<()>> {
+        self.jh.join()
     }
 }
 
