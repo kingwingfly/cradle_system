@@ -11,8 +11,10 @@ pub type BoxResult<T> = Result<T, Box<dyn std::error::Error + Send>>;
 
 /// A baby that cries after a certain time.
 pub trait Baby {
-    /// elapsed time in seconds
     /// The cry behavior of the baby.
+    ///
+    /// # Arguments
+    /// elapsed: The elapsed time in seconds.
     fn cry(&mut self, elapsed: usize) -> BoxResult<()>;
 }
 
